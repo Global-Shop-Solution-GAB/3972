@@ -1,0 +1,149 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.UDT.uPart.Define("sPart",String)
+Variable.UDT.uPart.Define("sSource",String)
+Variable.uGlobal.uPart.Declare("uPart")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Created for Freeman Company on 6/13/2014 by SKT
+'Quote 5750 Auto Flag BOM Complete
+'Uses Hook 16310.  This will save the BOM parent Number and BOM Complete Flag.
+'it will check to make sure the bom complete flag is Y.
+'if it is all Manufactured components will be flagged as complete in the BOM Master.
+'The hook must be set to Asynchronous or all the flags will be undone.
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+'Variable to hold individual BOM Part
+V.Local.sRet.Declare(String)
+'Variable to hold information written to text file
+V.Local.sFile.Declare(String)
+'Variable to hold text file path
+V.Local.sFilePath.Declare(String)
+'Variable to hold parent part number
+V.Local.sParent.Declare(String)
+'Variable to hold BOM Complete Flag
+V.Local.sComplete.Declare(String)
+'Variable to hold information retrieved from callwrapper File
+V.Local.sPartFile.Declare(String)
+'Variable for SQL Query.
+V.Local.sSql.Declare(String)
+'Variable for Loop counter
+V.Local.iCount.Declare(Long)
+'Variable for uPart Ordinal
+V.Local.iCount2.Declare(Long)
+'Variable for Loop upper bounds
+V.Local.iLoop.Declare(Long)
+
+'Check to make sure the Pre save hook is being used.
+F.Intrinsic.Control.If(V.Caller.Hook,=,16310)
+	'Save Parent Part number
+	V.Local.sParent.Set(V.Passed.000001)
+	'Save BOM Complete Flag
+	V.Local.sComplete.Set(V.Passed.000198)
+	'Set up UDT Variable
+	V.uGlobal.uPart.Redim(-1,-1)
+	'Open connection to database.
+	F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+	'Check to is the BOM complete Flag is Checked.
+	F.Intrinsic.Control.If(V.Local.sComplete.Trim,=,"Y")
+		'Save File Path for the Text file the Callwrapper will use.
+		F.Intrinsic.String.Concat(V.System.Temp,"\EXPLODEBOM",V.Caller.Terminal,".txt",V.Local.sFilePath)
+		'Save information that needs to be written to the file
+		F.Intrinsic.String.Concat("0",V.Ambient.Tab,V.Local.sParent,V.Ambient.Tab,V.Local.sFilePath,V.Local.sFile)
+		'Write the information to the file
+		F.Intrinsic.File.String2File(V.Local.sFilePath,V.Local.sFile)
+		'This callwrapper will explode the bom and save all the part information to a text file.  The text file path will be saved to the text file created perviously.
+		F.Global.General.CallWrapperSync(410000,V.Local.sFilePath)
+		'Read the text file saved in sFile so the file the callwrapper created can be located.
+		F.Intrinsic.File.fileToStringArray(v.Local.sFilePath,v.Ambient.Tab,v.Local.sFile)
+		'Get the File name the callwrapper created.
+		F.Intrinsic.File.GetFileNameFromFQN(V.Local.sFile(3),V.Local.sFile.Trim)
+		'Remove all the spaces after the file name. (Note at this time .Trim will not work)
+		F.Intrinsic.String.Split(V.Local.sFile," ",V.Local.sFile)
+		'Save full path with file name
+		F.Intrinsic.String.Concat(V.System.Temp,"\",V.Local.sFile(0).Trim,V.Local.sFilePath.Trim)
+		'Read the file and save
+		F.Intrinsic.File.File2String(V.Local.sFilePath,V.Local.sPartFile)
+		'Split the string by new line
+		F.Intrinsic.String.Split(V.Local.sPartFile,V.Ambient.NewLine,V.Local.sPartFile)
+		'Remove the blank ordinal at the end
+		F.Intrinsic.Math.Sub(V.Local.sPartFile.UBound,1,V.Local.iLoop)
+		'Loop through string array.  Start at line 8 this is were the individual parts start
+		F.Intrinsic.Control.For(V.Local.iCount,8,V.Local.iLoop,1)
+		'Split each line by |~|
+		F.Intrinsic.String.Split(V.Local.sPartFile(v.Local.iCount),"|~|",V.Local.sRet)
+		'Check to see if UDT has information in it
+		F.Intrinsic.Control.If(V.uGlobal.uPart.UBound,=,-1)
+			'If no initialize
+			V.uGlobal.uPart.Redim(0,0)
+		F.Intrinsic.Control.Else
+			'If yes add new row
+			V.uGlobal.uPart.RedimPreserve(0,V.Local.iCount2)
+		F.Intrinsic.Control.EndIf
+		'Save the part number
+		V.uGlobal.uPart(v.Local.iCount2)!sPart.Set(V.Local.sRet(2))
+		'Save the Source
+		V.uGlobal.uPart(v.Local.iCount2)!sSource.Set(V.Local.sRet(5))
+		'Add 1 to udt counter
+		F.Intrinsic.Math.Add(V.Local.iCount2,1,V.Local.iCount2)
+	'Loop to next line in the file
+	F.Intrinsic.Control.Next(V.Local.iCount)
+	'Reset the counter
+	V.Local.iCount.Set(0)
+	'Loop through the UDT
+	F.Intrinsic.Control.For(V.Local.iCount,0,V.uGlobal.uPart.UBound,1)
+		'Check to see if the part has a souce code of "MS" or "MJ"
+		F.Intrinsic.Control.If(V.uGlobal.uPart(v.Local.iCount)!sSource.Trim,=,"MS","OR",V.uGlobal.uPart(v.Local.iCount)!sSource.Trim,=,"MJ")
+			'If it does set SQL Query
+			F.Intrinsic.String.Concat("Select Bom_Complete From Bom_Mstr Where Parent = '",V.uGlobal.uPart(v.Local.iCount)!sPart.Trim,"' and Source In ('M', 'F')",V.Local.sSql)
+			'Open connection to the record set
+			F.ODBC.Connection!conx.OpenLocalRecordsetRW("rst",V.Local.sSql)
+			'Make sure there was a record
+			F.Intrinsic.Control.If(V.ODBC.conx!rst.EOF,=,False)
+				'Set the BOM_Complete Flag to Y
+				F.ODBC.conx!rst.Set!Bom_Complete("Y")
+				'Update the record set
+				F.ODBC.conx!rst.Update
+			F.Intrinsic.Control.EndIf
+			'Close connection to the record set
+			F.ODBC.conx!rst.Close
+		F.Intrinsic.Control.EndIf
+	'Loop to next part
+	F.Intrinsic.Control.Next(V.Local.iCount)
+	F.Intrinsic.Control.EndIf
+	'Close connection to database
+	F.ODBC.Connection!conx.Close
+F.Intrinsic.Control.EndIf
+'End Program
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3972_Auto_Flag_BOM.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Comments.Start
+${$0$}$GCG_Auto_Flag_BOM$}$SKT$}$6/11/2014
+${$1$}$$}$$}$0$}$16310$}$BOM Pre-Save$}$6/11/2014 10:16:33 AM$}$
+${$2$}$$}$$}$0$}$0$}$410000$}$6/11/2014 10:16:33 AM$}$Explode BOM
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$Auto-Set Manufactured BOM Components to Complete with Parent.
+Advanced BOM option to use BOM complete flag must be turned on.
+When a BOM Parent is flagged as "Complete", Automatacally flag all sub-level parents to complete.
+
+On Hook 16310 (BOM Pre-Save)
+Program.Sub.Comments.End
+
